@@ -1,0 +1,3 @@
+module.exports=[72561,(a,b,c)=>{let{createClientModuleProxy:d}=a.r(91203);a.n(d("[project]/boxing-calendar/node_modules/next/dist/client/components/builtin/global-error.js <module evaluation>"))},92994,(a,b,c)=>{let{createClientModuleProxy:d}=a.r(91203);a.n(d("[project]/boxing-calendar/node_modules/next/dist/client/components/builtin/global-error.js"))},86096,a=>{"use strict";a.i(72561);var b=a.i(92994);a.n(b)},19229,a=>{a.n(a.i(86096))}];
+
+//# sourceMappingURL=0qop_next_dist_client_components_builtin_global-error_0smk7c-.js.map

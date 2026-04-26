@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* FullCalendar responsive overrides */
+.fc .fc-toolbar-title {
+  font-size: 1.1rem !important;
+}
+@media (max-width: 640px) {
+  .fc .fc-toolbar {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

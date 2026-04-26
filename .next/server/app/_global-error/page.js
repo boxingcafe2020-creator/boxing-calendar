@@ -1,0 +1,10 @@
+var R=require("../../chunks/ssr/[turbopack]_runtime.js")("server/app/_global-error/page.js")
+R.c("server/chunks/ssr/[root-of-the-server]__06u0ssa._.js")
+R.c("server/chunks/ssr/0qop_next_dist_0xl5udz._.js")
+R.c("server/chunks/ssr/0qop_next_dist_esm_build_templates_app-page_0h5.k1h.js")
+R.c("server/chunks/ssr/[root-of-the-server]__08w562~._.js")
+R.c("server/chunks/ssr/0qop_next_dist_04m1gu3._.js")
+R.c("server/chunks/ssr/0qop_next_dist_client_components_builtin_global-error_0smk7c-.js")
+R.c("server/chunks/ssr/boxing-calendar__next-internal_server_app__global-error_page_actions_073zquy.js")
+R.m(17895)
+module.exports=R.m(17895).exports
