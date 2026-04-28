@@ -1,14 +1,74 @@
+import * as cheerio from 'cheerio'
 import { ScrapedEvent } from '@/types'
 
-// Puppeteer + @sparticuz/chromium is only loaded at runtime (not during build)
-async function getBrowser() {
-  const chromium = (await import('@sparticuz/chromium')).default
-  const puppeteer = (await import('puppeteer-core')).default
-  return puppeteer.launch({
-    args: chromium.args,
-    executablePath: await chromium.executablePath(),
-    headless: true,
-  })
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+class CookieJar {
+  private store = new Map<string, string>()
+
+  ingest(res: Response) {
+    // Node 18.14+ exposes getSetCookie() for proper multi-value support
+    const h = res.headers as Headers & { getSetCookie?: () => string[] }
+    const list: string[] = typeof h.getSetCookie === 'function'
+      ? h.getSetCookie()
+      : (res.headers.get('set-cookie') ?? '').split(/,(?=\s*[^;=,\s]+=)/).filter(Boolean)
+
+    for (const raw of list) {
+      const nameVal = raw.split(';')[0]
+      const eq = nameVal.indexOf('=')
+      if (eq > 0) {
+        this.store.set(nameVal.slice(0, eq).trim(), nameVal.slice(eq + 1).trim())
+      }
+    }
+  }
+
+  header(): string {
+    return [...this.store.entries()].map(([k, v]) => `${k}=${v}`).join('; ')
+  }
+}
+
+async function httpFetch(
+  startUrl: string,
+  jar: CookieJar,
+  method = 'GET',
+  body?: string,
+  extraHeaders: Record<string, string> = {},
+  maxRedirects = 10
+): Promise<{ html: string; finalUrl: string }> {
+  let url = startUrl
+  let curMethod = method
+  let curBody = body
+  let curExtra = extraHeaders
+
+  for (let i = 0; i < maxRedirects; i++) {
+    const res = await fetch(url, {
+      method: curMethod,
+      body: curBody,
+      redirect: 'manual',
+      headers: {
+        'User-Agent': UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ja,en-US;q=0.9',
+        'Cookie': jar.header(),
+        ...curExtra,
+      },
+    })
+
+    jar.ingest(res)
+
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location') || ''
+      url = loc.startsWith('http') ? loc : new URL(loc, url).href
+      curMethod = 'GET'
+      curBody = undefined
+      curExtra = {}
+      continue
+    }
+
+    return { html: await res.text(), finalUrl: url }
+  }
+
+  throw new Error('Too many redirects')
 }
 
 export async function scrapeBoxmob(): Promise<ScrapedEvent[]> {
@@ -19,93 +79,110 @@ export async function scrapeBoxmob(): Promise<ScrapedEvent[]> {
     throw new Error('楽天IDまたはパスワードが設定されていません')
   }
 
-  const browser = await getBrowser()
+  const jar = new CookieJar()
+
+  // Step 1: Load boxmob login page and find the Rakuten OAuth link
+  const { html: loginHtml, finalUrl: loginPageUrl } = await httpFetch('https://boxmob.jp/sp/login', jar)
+  const $login = cheerio.load(loginHtml)
+
+  let rakutenAuthUrl = ''
+  $login('a[href]').each((_, el) => {
+    if (rakutenAuthUrl) return
+    const href = $login(el).attr('href') || ''
+    if (href.includes('rakuten') || href.includes('oauth')) {
+      rakutenAuthUrl = href.startsWith('http') ? href : new URL(href, loginPageUrl).href
+    }
+  })
+
+  if (!rakutenAuthUrl) {
+    throw new Error('楽天ログインリンクが見つかりません')
+  }
+
+  // Step 2: Go to Rakuten OAuth page (may involve multiple redirects)
+  const { html: authHtml, finalUrl: authUrl } = await httpFetch(rakutenAuthUrl, jar)
+  const $auth = cheerio.load(authHtml)
+
+  // Find the login form
+  const $form = $auth('form').first()
+  const rawAction = $form.attr('action') || authUrl
+  const formAction = rawAction.startsWith('http') ? rawAction : new URL(rawAction, authUrl).href
+
+  // Collect hidden inputs (CSRF tokens etc.)
+  const fields: Record<string, string> = {}
+  $form.find('input[type="hidden"]').each((_, el) => {
+    const name = $auth(el).attr('name')
+    const value = $auth(el).attr('value') ?? ''
+    if (name) fields[name] = value
+  })
+
+  // Detect the username/password field names (Rakuten uses 'u' and 'p')
+  const idInput = $form.find('input[name="u"], input[name="userId"], input[type="email"], input[type="text"]').first()
+  const pwInput = $form.find('input[name="p"], input[name="password"], input[type="password"]').first()
+  fields[idInput.attr('name') || 'u'] = rakutenId
+  fields[pwInput.attr('name') || 'p'] = rakutenPassword
+
+  // Step 3: Submit login form
+  const postBody = new URLSearchParams(fields).toString()
+  await httpFetch(formAction, jar, 'POST', postBody, {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Referer': authUrl,
+  })
+
+  // Step 4: Fetch schedule page with the session cookie
+  const { html: scheduleHtml } = await httpFetch('https://boxmob.jp/sp/schedule.html', jar)
+
+  return parseSchedule(scheduleHtml)
+}
+
+function parseSchedule(html: string): ScrapedEvent[] {
+  const $ = cheerio.load(html)
   const events: ScrapedEvent[] = []
 
-  try {
-    const page = await browser.newPage()
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
+  $('.schedule-item, .event-item, [class*="schedule"], [class*="event"]').each((_, el) => {
+    const item = $(el)
+    const dateText = item.find('[class*="date"], time, .date').first().text().trim()
+    const titleText = item.find('[class*="title"], h2, h3, .title').first().text().trim()
+    const broadcastText = item.find('[class*="broadcast"], [class*="tv"], [class*="stream"]').first().text().trim()
+    const matchText = item.find('[class*="match"], [class*="bout"]').text().trim()
 
-    // boxmob.jpのログインページに移動
-    await page.goto('https://boxmob.jp/sp/login', { waitUntil: 'networkidle2', timeout: 30000 })
+    if (!dateText || !titleText) return
 
-    // 楽天ログインボタンを探してクリック
-    const rakutenBtn = await page.$('a[href*="rakuten"], button[class*="rakuten"], img[alt*="楽天"]')
-    if (rakutenBtn) {
-      await rakutenBtn.click()
-      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 })
-    }
+    const date = parseJapaneseDate(dateText)
+    if (!date) return
 
-    // 楽天ログインフォームに入力
-    await page.waitForSelector('input[name="u"], input[id*="loginInner_u"], input[type="email"]', { timeout: 15000 })
-    const idSelector = await page.$('input[name="u"]') || await page.$('input[id*="loginInner_u"]') || await page.$('input[type="email"]')
-    const pwSelector = await page.$('input[name="p"]') || await page.$('input[id*="loginInner_p"]') || await page.$('input[type="password"]')
-
-    if (!idSelector || !pwSelector) throw new Error('楽天ログインフォームが見つかりません')
-
-    await idSelector.type(rakutenId, { delay: 50 })
-    await pwSelector.type(rakutenPassword, { delay: 50 })
-
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-      page.keyboard.press('Enter'),
-    ])
-
-    // スケジュールページへ移動
-    await page.goto('https://boxmob.jp/sp/schedule.html', { waitUntil: 'networkidle2', timeout: 30000 })
-
-    const content = await page.content()
-    const { load } = await import('cheerio')
-    const $ = load(content)
-
-    // 試合情報を抽出（実際のHTMLに合わせてセレクタを調整）
-    $('.schedule-item, .event-item, [class*="schedule"], [class*="event"]').each((_, el) => {
-      const item = $(el)
-      const dateText = item.find('[class*="date"], time, .date').first().text().trim()
-      const titleText = item.find('[class*="title"], h2, h3, .title').first().text().trim()
-      const broadcastText = item.find('[class*="broadcast"], [class*="tv"], [class*="stream"]').first().text().trim()
-      const matchText = item.find('[class*="match"], [class*="bout"]').text().trim()
-
-      if (!dateText || !titleText) return
-
-      const date = parseJapaneseDate(dateText)
-      if (!date) return
-
-      events.push({
-        title: titleText,
-        event_date: date.date,
-        event_time: date.time,
-        location: null,
-        broadcast_info: broadcastText || null,
-        match_details: matchText || null,
-        source: 'boxmob',
-        source_url: 'https://boxmob.jp/sp/schedule.html',
-      })
+    events.push({
+      title: titleText,
+      event_date: date.date,
+      event_time: date.time,
+      location: null,
+      broadcast_info: broadcastText || null,
+      match_details: matchText || null,
+      source: 'boxmob',
+      source_url: 'https://boxmob.jp/sp/schedule.html',
     })
+  })
 
-    // セレクタで取れない場合、テキスト全体からパース
-    if (events.length === 0) {
-      $('body').find('*').each((_, el) => {
-        const text = $(el).children().length === 0 ? $(el).text().trim() : ''
-        if (text.match(/\d{4}年\d{1,2}月\d{1,2}日/) && text.length < 200) {
-          const date = parseJapaneseDate(text)
-          if (date) {
-            events.push({
-              title: text.substring(0, 100),
-              event_date: date.date,
-              event_time: date.time,
-              location: null,
-              broadcast_info: null,
-              match_details: null,
-              source: 'boxmob',
-              source_url: 'https://boxmob.jp/sp/schedule.html',
-            })
-          }
+  // Fallback: extract date-containing leaf text nodes
+  if (events.length === 0) {
+    $('body *').each((_, el) => {
+      if ($(el).children().length > 0) return
+      const text = $(el).text().trim()
+      if (text.match(/\d{4}年\d{1,2}月\d{1,2}日/) && text.length < 200) {
+        const date = parseJapaneseDate(text)
+        if (date) {
+          events.push({
+            title: text.substring(0, 100),
+            event_date: date.date,
+            event_time: date.time,
+            location: null,
+            broadcast_info: null,
+            match_details: null,
+            source: 'boxmob',
+            source_url: 'https://boxmob.jp/sp/schedule.html',
+          })
         }
-      })
-    }
-  } finally {
-    await browser.close()
+      }
+    })
   }
 
   return events
