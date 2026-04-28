@@ -40,18 +40,8 @@ export async function runAllScrapers() {
     await logScrape('ringmagazine', 'failed', msg, 0)
   }
 
-  // boxmob (ログイン必要)
-  try {
-    const { scrapeBoxmob } = await import('./boxmob')
-    const events = await scrapeBoxmob()
-    const added = await saveEvents(events)
-    results.boxmob = added
-    await logScrape('boxmob', 'success', `${added}件追加`, added)
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    results.errors.push(`Boxmob: ${msg}`)
-    await logScrape('boxmob', 'failed', msg, 0)
-  }
+  // boxmob: 一時スキップ（Rakuten OAuth対応待ち）
+  await logScrape('boxmob', 'skipped', 'Rakuten OAuth未対応のためスキップ', 0)
 
   // エラーがあればメール通知
   if (results.errors.length > 0) {
