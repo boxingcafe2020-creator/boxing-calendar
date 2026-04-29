@@ -92,7 +92,6 @@ function sourceLabel(source: string): string {
   switch (source) {
     case 'boxmob': return 'Boxmob'
     case 'boxingscene': return 'BoxingScene'
-    case 'ringmagazine': return 'The Ring Magazine'
     default: return '手動登録'
   }
 }

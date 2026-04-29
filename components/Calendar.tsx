@@ -31,7 +31,6 @@ export default function Calendar({ events }: Props) {
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-500 inline-block" />手動登録</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" />Boxmob</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" />BoxingScene</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-purple-500 inline-block" />The Ring</span>
       </div>
       <FullCalendar
         plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
@@ -64,7 +63,6 @@ function sourceColor(source: string) {
   switch (source) {
     case 'boxmob': return '#ef4444'
     case 'boxingscene': return '#22c55e'
-    case 'ringmagazine': return '#a855f7'
     default: return '#3b82f6'
   }
 }

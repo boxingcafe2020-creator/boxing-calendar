@@ -14,7 +14,7 @@ export async function runAllScrapers() {
     const events = await scrapeBoxingScene()
     const count = await upsertEvents(events)
     results.boxingscene = count
-    await logScrape('boxingscene', 'success', `${count}件追加/更新`, count)
+    await logScrape('boxingscene', 'success', `スクレイプ${events.length}件 / DB${count}件追加/更新`, count)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     results.errors.push(`BoxingScene: ${msg}`)

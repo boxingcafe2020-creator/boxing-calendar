@@ -91,6 +91,7 @@ function parseRscResponse(text: string): BSResponse | null {
 async function callServerAction(cursor: Cursor): Promise<BSResponse | null> {
   const res = await fetch(SCHEDULE_URL, {
     method: 'POST',
+    cache: 'no-store',
     headers: {
       'User-Agent': UA,
       'Next-Action': ACTION_ID,
@@ -106,7 +107,7 @@ async function callServerAction(cursor: Cursor): Promise<BSResponse | null> {
 }
 
 export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
-  const res = await fetch(SCHEDULE_URL, { headers: { 'User-Agent': UA } })
+  const res = await fetch(SCHEDULE_URL, { cache: 'no-store', headers: { 'User-Agent': UA } })
   if (!res.ok) throw new Error(`BoxingScene fetch failed: ${res.status}`)
   const html = await res.text()
   const $ = cheerio.load(html)

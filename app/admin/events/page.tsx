@@ -70,7 +70,6 @@ function sourceStyle(source: string): string {
   switch (source) {
     case 'boxmob': return 'bg-red-50 text-red-600'
     case 'boxingscene': return 'bg-green-50 text-green-600'
-    case 'ringmagazine': return 'bg-purple-50 text-purple-600'
     default: return 'bg-blue-50 text-blue-600'
   }
 }

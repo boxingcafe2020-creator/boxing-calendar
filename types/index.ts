@@ -1,4 +1,4 @@
-export type EventSource = 'manual' | 'boxmob' | 'boxingscene' | 'ringmagazine'
+export type EventSource = 'manual' | 'boxmob' | 'boxingscene'
 
 export interface BoxingEvent {
   id: string

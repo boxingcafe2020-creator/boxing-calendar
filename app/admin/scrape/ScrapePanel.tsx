@@ -23,7 +23,7 @@ export default function ScrapePanel({ logs }: Props) {
       const data = await res.json()
       if (res.ok) {
         const r = data.results
-        setResult(`完了: Boxmob ${r.boxmob}件 / BoxingScene ${r.boxingscene}件 / Ring Magazine ${r.ringmagazine}件 追加${r.errors?.length > 0 ? `\nエラー: ${r.errors.join(', ')}` : ''}`)
+        setResult(`完了: BoxingScene ${r.boxingscene}件 追加/更新${r.errors?.length > 0 ? `\nエラー: ${r.errors.join(', ')}` : ''}`)
       } else {
         setResult(`エラー: ${data.error}`)
       }
@@ -40,21 +40,13 @@ export default function ScrapePanel({ logs }: Props) {
       <div className="bg-white rounded-2xl shadow-sm p-6">
         <h2 className="font-semibold text-gray-900 mb-2">手動スクレイピング実行</h2>
         <p className="text-sm text-gray-500 mb-4">
-          3つのサイトから最新の試合情報を取得します。自動収集は毎週月曜日に実行されます。
+          BoxingSceneから最新の試合情報を取得します。自動収集は毎週月曜日に実行されます。
         </p>
 
         <div className="space-y-3 text-sm text-gray-600 mb-4">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            <span>boxmob.jp（楽天ログイン必要）</span>
-          </div>
-          <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500" />
-            <span>boxingscene.com（日本時間に変換）</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-purple-500" />
-            <span>ringmagazine.com（重複スキップ）</span>
+            <span>boxingscene.com（全件取得・日本時間に変換）</span>
           </div>
         </div>
 
