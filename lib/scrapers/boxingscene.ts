@@ -179,7 +179,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
       const response = await callServerAction(cursor)
       if (!response) break
 
-      const pageEvents = response.results.filter(e => e.entity_type_id === 2)
+      const pageEvents = (response.results ?? []).filter(e => e.entity_type_id === 2)
       if (pageEvents.length === 0) break
 
       for (const ev of pageEvents) {
@@ -203,7 +203,8 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         })
       }
 
-      cursor = response.next_command?.args ?? null
+      const nextArgs = response.next_command?.args
+      cursor = nextArgs?.last_event_id ? nextArgs : null
     }
   }
 
