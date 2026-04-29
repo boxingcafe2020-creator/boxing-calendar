@@ -21,6 +21,11 @@ interface BSEventItem {
   networks?: Array<{ name?: string; date?: string }>
 }
 
+interface BSResponse {
+  results: BSEventItem[]
+  next_command?: { args?: Cursor } | null
+}
+
 function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -52,50 +57,38 @@ function headerTimeToJST(headerText: string): string | null {
   return tzFormat(jst, 'HH:mm', { timeZone: JST })
 }
 
+// Cursor is JSON-escaped inside a JS string in the HTML: \"last_event_id\":6279
 function parseCursorFromHtml(html: string): Cursor | null {
-  const m = html.match(/"last_event_id"\s*:\s*(\d+)[^"]*"last_event_date"\s*:\s*"([^"]+)"/)
-  if (!m) return null
-  return { last_event_id: parseInt(m[1]), last_event_date: m[2] }
+  const idMatch = html.match(/\\"last_event_id\\":(\d+)/)
+  const dateMatch = html.match(/\\"last_event_date\\":\\"([^\\]+)\\"/)
+  if (!idMatch || !dateMatch) return null
+  return { last_event_id: parseInt(idMatch[1]), last_event_date: dateMatch[1] }
 }
 
-function deepFind(obj: unknown, events: BSEventItem[], cursor: { value: Cursor | null }): void {
-  if (!obj || typeof obj !== 'object') return
-  if (Array.isArray(obj)) {
-    for (const item of obj) deepFind(item, events, cursor)
-    return
-  }
-  const record = obj as Record<string, unknown>
-  if ('entity_type_id' in record && typeof record.entity_type_id === 'number') {
-    events.push(record as unknown as BSEventItem)
-    return
-  }
-  const nc = record.next_command as Record<string, unknown> | undefined
-  if (nc?.args) {
-    const args = nc.args as Record<string, unknown>
-    if (typeof args.last_event_id === 'number' && typeof args.last_event_date === 'string') {
-      cursor.value = { last_event_id: args.last_event_id, last_event_date: args.last_event_date }
+// Find the BSResponse object in the RSC stream by locating {"config": and
+// using bracket-counting to extract the complete JSON object.
+function parseRscResponse(text: string): BSResponse | null {
+  const marker = '{"config":'
+  const start = text.lastIndexOf(marker)
+  if (start === -1) return null
+  let depth = 0
+  let end = -1
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++
+    else if (text[i] === '}') {
+      depth--
+      if (depth === 0) { end = i + 1; break }
     }
   }
-  for (const val of Object.values(record)) deepFind(val, events, cursor)
-}
-
-function parseRscResponse(text: string): { events: BSEventItem[]; nextCursor: Cursor | null } {
-  const events: BSEventItem[] = []
-  const cursor = { value: null as Cursor | null }
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue
-    const colonIdx = line.indexOf(':')
-    if (colonIdx === -1) continue
-    const payload = line.slice(colonIdx + 1).trim()
-    if (!payload) continue
-    try {
-      deepFind(JSON.parse(payload), events, cursor)
-    } catch {}
+  if (end === -1) return null
+  try {
+    return JSON.parse(text.slice(start, end)) as BSResponse
+  } catch {
+    return null
   }
-  return { events, nextCursor: cursor.value }
 }
 
-async function callServerAction(cursor: Cursor): Promise<{ events: BSEventItem[]; nextCursor: Cursor | null }> {
+async function callServerAction(cursor: Cursor): Promise<BSResponse | null> {
   const res = await fetch(SCHEDULE_URL, {
     method: 'POST',
     headers: {
@@ -131,8 +124,15 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
     anchorInfo[slug] = { broadcast, time, href }
   })
 
-  // Parse JSON-LD for the initial batch of events
-  const jsonLdEvents: ScrapedEvent[] = []
+  // Parse JSON-LD for the initial batch (~10 events shown on page load)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const seen = new Set<string>()
+  const merged: ScrapedEvent[] = []
+
+  const addKey = (date: string, title: string) =>
+    `${date}|${title.toLowerCase().replace(/\s+/g, ' ').trim()}`
+
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const data = JSON.parse($(el).html() || '')
@@ -140,14 +140,17 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
       if (!Array.isArray(list)) return
       for (const item of list) {
         if (item['@type'] !== 'SportsEvent') continue
-        const date = item.startDate as string | undefined
+        const date: string = item.startDate || ''
         const name: string = item.name || ''
-        if (!date || !name) continue
+        if (!date || !name || new Date(date) < today) continue
+        const k = addKey(date, name)
+        if (seen.has(k)) continue
+        seen.add(k)
         const location: string | null =
           item.location?.name || item.location?.address?.addressRegion || null
         const slug = slugify(name)
         const info = anchorInfo[slug] || null
-        jsonLdEvents.push({
+        merged.push({
           title: name,
           event_date: date,
           event_time: info?.time ?? null,
@@ -161,10 +164,8 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
     } catch {}
   })
 
-  // Paginate via server action to get all events beyond the initial batch
-  const apiEvents: BSEventItem[] = []
+  // Paginate via server action to collect all remaining events
   const initialCursor = parseCursorFromHtml(html)
-
   if (initialCursor) {
     let cursor: Cursor | null = initialCursor
     const seenCursors = new Set<string>()
@@ -174,51 +175,35 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
       if (seenCursors.has(key)) break
       seenCursors.add(key)
 
-      const { events, nextCursor } = await callServerAction(cursor)
-      apiEvents.push(...events.filter(e => e.entity_type_id === 2))
-      cursor = nextCursor
+      const response = await callServerAction(cursor)
+      if (!response) break
+
+      const pageEvents = response.results.filter(e => e.entity_type_id === 2)
+      if (pageEvents.length === 0) break
+
+      for (const ev of pageEvents) {
+        const title = ev.tag_name?.trim() || ''
+        const date = ev.event_date || ''
+        if (!title || !date || new Date(date) < today) continue
+        const k = addKey(date, title)
+        if (seen.has(k)) continue
+        seen.add(k)
+        const slug = slugify(title)
+        const info = anchorInfo[slug] || null
+        merged.push({
+          title,
+          event_date: date,
+          event_time: info?.time ?? null,
+          location: null,
+          broadcast_info: info?.broadcast ?? (ev.networks?.[0]?.name || null),
+          match_details: null,
+          source: 'boxingscene',
+          source_url: SCHEDULE_URL,
+        })
+      }
+
+      cursor = response.next_command?.args ?? null
     }
-  }
-
-  // Merge: JSON-LD events first, then non-duplicate API events
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  const seen = new Set<string>()
-  const merged: ScrapedEvent[] = []
-
-  const addKey = (date: string, title: string) =>
-    `${date}|${title.toLowerCase().replace(/\s+/g, ' ').trim()}`
-
-  for (const ev of jsonLdEvents) {
-    if (new Date(ev.event_date) < today) continue
-    const k = addKey(ev.event_date, ev.title)
-    if (seen.has(k)) continue
-    seen.add(k)
-    merged.push(ev)
-  }
-
-  for (const ev of apiEvents) {
-    const title = ev.tag_name?.trim() || ''
-    const date = ev.event_date || ''
-    if (!title || !date) continue
-    if (new Date(date) < today) continue
-    const k = addKey(date, title)
-    if (seen.has(k)) continue
-    seen.add(k)
-
-    const slug = slugify(title)
-    const info = anchorInfo[slug] || null
-    merged.push({
-      title,
-      event_date: date,
-      event_time: info?.time ?? null,
-      location: null,
-      broadcast_info: info?.broadcast ?? (ev.networks?.[0]?.name || null),
-      match_details: null,
-      source: 'boxingscene',
-      source_url: SCHEDULE_URL,
-    })
   }
 
   return merged
