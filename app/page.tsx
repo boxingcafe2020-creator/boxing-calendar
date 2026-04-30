@@ -14,7 +14,7 @@ export default async function Home() {
     <div className="min-h-screen">
       <header className="bg-gray-900 text-white py-4 px-6 shadow">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-bold tracking-wide">🥊 ボクシングカレンダー</h1>
+          <h1 className="text-xl font-bold tracking-wide">🥊 Shinta's Boxing Calendar</h1>
           <span className="text-gray-400 text-sm hidden sm:block">世界のボクシング試合日程</span>
         </div>
       </header>

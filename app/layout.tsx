@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'ボクシングカレンダー',
+  title: "Shinta's Boxing Calendar",
   description: '世界のボクシング試合日程',
 }
 

@@ -33,7 +33,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">管理者ログイン</h1>
-        <p className="text-gray-500 text-sm mb-6">ボクシングカレンダー管理画面</p>
+        <p className="text-gray-500 text-sm mb-6">Shinta's Boxing Calendar 管理画面</p>
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>

@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       await transporter.sendMail({
         from: gmailUser,
         to: 'boxingcafe2020@gmail.com',
-        subject: '【ボクシングカレンダー】スクレイピングエラー通知',
+        subject: "[Shinta's Boxing Calendar] スクレイピングエラー通知",
         text: [
           'スクレイピング中にエラーが発生しました。',
           '',
