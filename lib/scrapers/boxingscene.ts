@@ -50,6 +50,7 @@ interface Cursor {
 interface BSEventItem {
   entity_type_id: number
   tag_name?: string
+  slug?: string
   event_date?: string
   event_timezone?: string
   networks?: Array<{ name?: string; date?: string; time?: string; timezone?: string }>
@@ -208,7 +209,9 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
           broadcast_info: info?.broadcast ?? null,
           match_details: null,
           source: 'boxingscene',
-          source_url: info?.href ? `https://www.boxingscene.com${info.href}` : SCHEDULE_URL,
+          source_url: info?.href
+            ? `https://www.boxingscene.com${info.href}`
+            : `https://www.boxingscene.com/events/${slugify(name)}`,
         })
       }
     } catch {}
@@ -264,7 +267,9 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
           broadcast_info: broadcastInfo,
           match_details: null,
           source: 'boxingscene',
-          source_url: SCHEDULE_URL,
+          source_url: ev.slug
+            ? `https://www.boxingscene.com/events/${ev.slug}`
+            : `https://www.boxingscene.com/events/${slugify(title)}`,
         })
       }
 
