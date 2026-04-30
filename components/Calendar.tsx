@@ -6,7 +6,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import listPlugin from '@fullcalendar/list'
 import interactionPlugin from '@fullcalendar/interaction'
 import { BoxingEvent } from '@/types'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import EventDetailModal from './EventDetailModal'
 
 interface Props {
@@ -16,6 +16,7 @@ interface Props {
 export default function Calendar({ events }: Props) {
   const [selected, setSelected] = useState<BoxingEvent | null>(null)
   const [isMobile, setIsMobile] = useState(false)
+  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null)
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640)
@@ -24,13 +25,34 @@ export default function Calendar({ events }: Props) {
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  const calendarEvents = events.map(e => {
+  // Collect unique broadcast platforms across all events
+  const platforms = useMemo(() => {
+    const set = new Set<string>()
+    for (const e of events) {
+      if (e.broadcast_info) {
+        for (const p of e.broadcast_info.split(' / ')) {
+          if (p.trim()) set.add(p.trim())
+        }
+      }
+    }
+    return [...set].sort()
+  }, [events])
+
+  // Filter events by selected platform
+  const filteredEvents = useMemo(() => {
+    if (!selectedPlatform) return events
+    return events.filter(e => {
+      if (!e.broadcast_info) return false
+      return e.broadcast_info.split(' / ').map(p => p.trim()).includes(selectedPlatform)
+    })
+  }, [events, selectedPlatform])
+
+  const calendarEvents = filteredEvents.map(e => {
     const hasBroadcast = !!e.broadcast_info
     const color = sourceColor(e.source)
-    const displayTitle = e.title
     return {
       id: e.id,
-      title: displayTitle,
+      title: e.title,
       start: e.event_time ? `${e.event_date}T${e.event_time}` : e.event_date,
       allDay: !e.event_time,
       extendedProps: e,
@@ -40,16 +62,43 @@ export default function Calendar({ events }: Props) {
     }
   })
 
+  // Mobile: use dayGridWeek (no time-slot columns → no overlap) instead of timeGridWeek
   const headerToolbar = isMobile
-    ? { left: 'prev,next', center: 'title', right: 'dayGridMonth,listMonth' }
-    : { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay,listMonth' }
+    ? { left: 'prev,next', center: 'title', right: 'dayGridMonth,dayGridWeek,listMonth' }
+    : { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listMonth' }
 
-  const buttonText = isMobile
-    ? { today: '今日', month: '月', list: 'リスト' }
-    : { today: '今日', month: '月', week: '週', day: '日', list: 'リスト' }
+  const buttonText = { today: '今日', month: '月', week: '週', list: 'リスト' }
 
   return (
     <div className="p-4">
+      {/* Platform filter */}
+      <div className="mb-3 flex flex-wrap gap-2">
+        <button
+          onClick={() => setSelectedPlatform(null)}
+          className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+            selectedPlatform === null
+              ? 'bg-gray-800 text-white border-gray-800'
+              : 'text-gray-600 border-gray-300 hover:border-gray-500 hover:text-gray-800'
+          }`}
+        >
+          すべて
+        </button>
+        {platforms.map(p => (
+          <button
+            key={p}
+            onClick={() => setSelectedPlatform(p)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              selectedPlatform === p
+                ? 'bg-gray-800 text-white border-gray-800'
+                : 'text-gray-600 border-gray-300 hover:border-gray-500 hover:text-gray-800'
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+
+      {/* Legend */}
       <div className="mb-4 flex flex-wrap gap-4 text-sm text-gray-600">
         <span className="flex items-center gap-1.5">
           <span className="inline-block px-2 py-0.5 rounded bg-green-500 text-white text-xs font-medium">緑</span>
@@ -63,6 +112,7 @@ export default function Calendar({ events }: Props) {
           テキストのみ = 配信情報なし
         </span>
       </div>
+
       <FullCalendar
         key={isMobile ? 'mobile' : 'desktop'}
         plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
