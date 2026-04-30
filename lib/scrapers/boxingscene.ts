@@ -52,6 +52,7 @@ interface BSEventItem {
   tag_name?: string
   slug?: string
   event_date?: string
+  event_time?: string
   event_timezone?: string
   networks?: Array<{ name?: string; date?: string; time?: string; timezone?: string }>
 }
@@ -239,11 +240,16 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         const estDate = ev.event_date || ''
         if (!title || !estDate) continue
 
-        // Convert EST date+time → JST using network time info when available
+        // Convert local date+time → JST: prefer top-level event_time, fall back to networks[].time
         const net = ev.networks?.find(n => n.time && n.timezone)
         let eventDate = estDate
         let eventTime: string | null = null
-        if (net?.time && net.timezone) {
+        if (ev.event_time) {
+          const [h, m] = ev.event_time.split(':').map(Number)
+          const tz = ev.event_timezone || 'EST'
+          const jst = localToJST(estDate, h, m, tz)
+          if (jst) { eventDate = jst.date; eventTime = jst.time }
+        } else if (net?.time && net.timezone) {
           const [h, m] = net.time.split(':').map(Number)
           const jst = localToJST(estDate, h, m, net.timezone)
           if (jst) { eventDate = jst.date; eventTime = jst.time }
