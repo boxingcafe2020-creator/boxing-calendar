@@ -9,6 +9,9 @@ const supabase = createClient(
 export async function runAllScrapers() {
   const results = { boxingscene: 0, errors: [] as string[] }
 
+  // Remove any legacy ringmagazine events left in the DB
+  await supabase.from('events').delete().eq('source', 'ringmagazine')
+
   try {
     const { scrapeBoxingScene } = await import('./boxingscene')
     const events = await scrapeBoxingScene()
