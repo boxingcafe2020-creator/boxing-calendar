@@ -82,6 +82,8 @@ function localToJST(datePart: string, hour: number, min: number, tzAbbr: string)
 function slugify(name: string): string {
   return name
     .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip accents: é→e, ñ→n, etc.
+    .replace(/[''`´]/g, '')                            // remove apostrophes (BoxingScene drops them)
     .replace(/\s+vs\.\s+/i, '-vs-')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
@@ -168,7 +170,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
   const nowJst = toZonedTime(new Date(), JST)
   const todayJst = tzFormat(nowJst, 'yyyy-MM-dd', { timeZone: JST })
 
-  const seen = new Set<string>()
+  const seen = new Map<string, number>()  // key → index in merged
   const merged: ScrapedEvent[] = []
 
   const addKey = (date: string, title: string) =>
@@ -197,7 +199,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
 
         const k = addKey(eventDate, name)
         if (seen.has(k)) continue
-        seen.add(k)
+        seen.set(k, merged.length)
 
         const location: string | null =
           item.location?.name || item.location?.address?.addressRegion || null
@@ -258,12 +260,23 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         if (eventDate < todayJst) continue
 
         const k = addKey(eventDate, title)
-        if (seen.has(k)) continue
-        seen.add(k)
 
         // Collect all unique broadcast platform names
         const networkNames = [...new Set((ev.networks ?? []).map(n => n.name).filter(Boolean) as string[])]
         const broadcastInfo = networkNames.length ? networkNames.join(' / ') : null
+        const sourceUrl = ev.slug
+          ? `https://www.boxingscene.com/events/${ev.slug}`
+          : `https://www.boxingscene.com/events/${slugify(title)}`
+
+        const existingIdx = seen.get(k)
+        if (existingIdx !== undefined) {
+          // Patch existing JSON-LD entry if server action has better info
+          const e = merged[existingIdx]
+          if (!e.broadcast_info && broadcastInfo) e.broadcast_info = broadcastInfo
+          if (ev.slug && !e.source_url?.endsWith(`/${ev.slug}`)) e.source_url = sourceUrl
+          continue
+        }
+        seen.set(k, merged.length)
 
         merged.push({
           title,
@@ -273,9 +286,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
           broadcast_info: broadcastInfo,
           match_details: null,
           source: 'boxingscene',
-          source_url: ev.slug
-            ? `https://www.boxingscene.com/events/${ev.slug}`
-            : `https://www.boxingscene.com/events/${slugify(title)}`,
+          source_url: sourceUrl,
         })
       }
 
