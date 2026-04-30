@@ -17,11 +17,13 @@ export default function Calendar({ events }: Props) {
   const [selected, setSelected] = useState<BoxingEvent | null>(null)
 
   const calendarEvents = events.map(e => {
-    const color = sourceColor(e.source)
     const hasBroadcast = !!e.broadcast_info
+    const color = sourceColor(e.source)
+    // Prepend time when available: "HH:mm Title"
+    const displayTitle = e.event_time ? `${e.event_time} ${e.title}` : e.title
     return {
       id: e.id,
-      title: e.title,
+      title: displayTitle,
       start: e.event_time ? `${e.event_date}T${e.event_time}` : e.event_date,
       allDay: !e.event_time,
       extendedProps: e,
@@ -35,16 +37,15 @@ export default function Calendar({ events }: Props) {
     <div className="p-4">
       <div className="mb-4 flex flex-wrap gap-4 text-sm text-gray-600">
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" />手動登録
+          <span className="inline-block px-2 py-0.5 rounded bg-green-500 text-white text-xs font-medium">緑</span>
+          BoxingScene（配信あり）
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />Boxmob
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-green-500 inline-block" />BoxingScene
+          <span className="inline-block px-2 py-0.5 rounded bg-red-500 text-white text-xs font-medium">赤</span>
+          Boxmob（配信あり）
         </span>
         <span className="flex items-center gap-1.5 text-gray-400">
-          <span className="w-3 h-3 rounded-full border border-gray-400 inline-block" />配信情報なし（テキストのみ）
+          テキストのみ = 配信情報なし
         </span>
       </div>
       <FullCalendar
@@ -63,6 +64,7 @@ export default function Calendar({ events }: Props) {
           list: 'リスト',
         }}
         locale="ja"
+        displayEventTime={false}
         events={calendarEvents}
         eventClick={info => setSelected(info.event.extendedProps as BoxingEvent)}
         height="auto"
