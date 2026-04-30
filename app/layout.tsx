@@ -3,7 +3,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: "Shinta's Boxing Calendar",
-  description: '世界のボクシング試合日程',
+  description: 'Boxing schedule, Japan',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

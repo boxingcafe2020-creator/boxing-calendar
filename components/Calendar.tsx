@@ -6,7 +6,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import listPlugin from '@fullcalendar/list'
 import interactionPlugin from '@fullcalendar/interaction'
 import { BoxingEvent } from '@/types'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import EventDetailModal from './EventDetailModal'
 
 interface Props {
@@ -15,6 +15,14 @@ interface Props {
 
 export default function Calendar({ events }: Props) {
   const [selected, setSelected] = useState<BoxingEvent | null>(null)
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   const calendarEvents = events.map(e => {
     const hasBroadcast = !!e.broadcast_info
@@ -26,12 +34,19 @@ export default function Calendar({ events }: Props) {
       start: e.event_time ? `${e.event_date}T${e.event_time}` : e.event_date,
       allDay: !e.event_time,
       extendedProps: e,
-      // Keep per-event colors for list-view dot; eventContent controls visual rendering
       backgroundColor: hasBroadcast ? color : 'transparent',
       borderColor: hasBroadcast ? color : 'transparent',
       textColor: hasBroadcast ? '#ffffff' : color,
     }
   })
+
+  const headerToolbar = isMobile
+    ? { left: 'prev,next', center: 'title', right: 'dayGridMonth,listMonth' }
+    : { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay,listMonth' }
+
+  const buttonText = isMobile
+    ? { today: '今日', month: '月', list: 'リスト' }
+    : { today: '今日', month: '月', week: '週', day: '日', list: 'リスト' }
 
   return (
     <div className="p-4">
@@ -49,20 +64,11 @@ export default function Calendar({ events }: Props) {
         </span>
       </div>
       <FullCalendar
+        key={isMobile ? 'mobile' : 'desktop'}
         plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
         initialView="dayGridMonth"
-        headerToolbar={{
-          left: 'prev,next today',
-          center: 'title',
-          right: 'dayGridMonth,timeGridWeek,timeGridDay,listMonth',
-        }}
-        buttonText={{
-          today: '今日',
-          month: '月',
-          week: '週',
-          day: '日',
-          list: 'リスト',
-        }}
+        headerToolbar={headerToolbar}
+        buttonText={buttonText}
         locale="ja"
         displayEventTime={false}
         events={calendarEvents}
