@@ -13,6 +13,34 @@ interface Props {
   events: BoxingEvent[]
 }
 
+// Merge variant names into a single canonical label
+function normalizePlatform(raw: string): string {
+  const s = raw.trim()
+  if (/^WOWOW/i.test(s))                          return 'WOWOW'
+  if (/^ESPN/i.test(s))                            return 'ESPN'
+  if (/^ProBox/i.test(s))                          return 'ProBox'
+  if (/^ABEMA/i.test(s))                           return 'ABEMA TV'
+  if (/^Amazon\s*Prime|^Prime\s*Video/i.test(s))   return 'Amazon Prime'
+  if (/^YouTube|^Youtube/i.test(s))                return 'YouTube'
+  return s
+}
+
+const PLATFORM_ORDER = [
+  'ABEMA TV', 'Amazon Prime', 'Boxing Raise', 'Lemino',
+  'WOWOW', 'U-NEXT', 'Netflix', 'DAZN', 'ProBox', 'YouTube',
+]
+
+function sortPlatforms(platforms: string[]): string[] {
+  return [...platforms].sort((a, b) => {
+    const ai = PLATFORM_ORDER.indexOf(a)
+    const bi = PLATFORM_ORDER.indexOf(b)
+    if (ai !== -1 && bi !== -1) return ai - bi
+    if (ai !== -1) return -1
+    if (bi !== -1) return 1
+    return a.localeCompare(b, 'ja')
+  })
+}
+
 export default function Calendar({ events }: Props) {
   const [selected, setSelected] = useState<BoxingEvent | null>(null)
   const [isMobile, setIsMobile] = useState(false)
@@ -25,25 +53,26 @@ export default function Calendar({ events }: Props) {
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  // Collect unique broadcast platforms across all events
+  // Collect unique normalized broadcast platforms across all events
   const platforms = useMemo(() => {
     const set = new Set<string>()
     for (const e of events) {
       if (e.broadcast_info) {
         for (const p of e.broadcast_info.split(' / ')) {
-          if (p.trim()) set.add(p.trim())
+          const n = normalizePlatform(p)
+          if (n) set.add(n)
         }
       }
     }
-    return [...set].sort()
+    return sortPlatforms([...set])
   }, [events])
 
-  // Filter events by selected platform
+  // Filter events by selected normalized platform
   const filteredEvents = useMemo(() => {
     if (!selectedPlatform) return events
     return events.filter(e => {
       if (!e.broadcast_info) return false
-      return e.broadcast_info.split(' / ').map(p => p.trim()).includes(selectedPlatform)
+      return e.broadcast_info.split(' / ').map(normalizePlatform).includes(selectedPlatform)
     })
   }, [events, selectedPlatform])
 
