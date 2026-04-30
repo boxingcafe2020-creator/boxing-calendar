@@ -43,8 +43,15 @@ export async function runAllScrapers() {
 
 async function upsertEvents(events: ScrapedEvent[]): Promise<number> {
   if (events.length === 0) return 0
+
+  const { toZonedTime, format: tzFormat } = await import('date-fns-tz')
+  const todayJst = tzFormat(toZonedTime(new Date(), 'Asia/Tokyo'), 'yyyy-MM-dd', { timeZone: 'Asia/Tokyo' })
+
   let count = 0
   for (const event of events) {
+    // Leave past events untouched
+    if (event.event_date < todayJst) continue
+
     const { data: existing } = await supabase
       .from('events')
       .select('id')
