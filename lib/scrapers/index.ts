@@ -7,11 +7,12 @@ const supabase = createClient(
 )
 
 export async function runAllScrapers() {
-  const results = { boxingscene: 0, errors: [] as string[] }
+  const results = { boxingscene: 0, boxmob: 0, errors: [] as string[] }
 
   // Remove any legacy ringmagazine events left in the DB
   await supabase.from('events').delete().eq('source', 'ringmagazine')
 
+  // BoxingScene first — Boxmob runs after and overwrites duplicates (Boxmob takes priority)
   try {
     const { scrapeBoxingScene } = await import('./boxingscene')
     const events = await scrapeBoxingScene()
@@ -22,6 +23,18 @@ export async function runAllScrapers() {
     const msg = e instanceof Error ? e.message : String(e)
     results.errors.push(`BoxingScene: ${msg}`)
     await logScrape('boxingscene', 'failed', msg, 0)
+  }
+
+  try {
+    const { scrapeBoxmob } = await import('./boxmob')
+    const events = await scrapeBoxmob()
+    const count = await upsertEvents(events)
+    results.boxmob = count
+    await logScrape('boxmob', 'success', `スクレイプ${events.length}件 / DB${count}件追加/更新`, count)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    results.errors.push(`Boxmob: ${msg}`)
+    await logScrape('boxmob', 'failed', msg, 0)
   }
 
   if (results.errors.length > 0) await sendErrorNotification(results.errors)
