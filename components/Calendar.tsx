@@ -27,7 +27,7 @@ export default function Calendar({ events }: Props) {
   const calendarEvents = events.map(e => {
     const hasBroadcast = !!e.broadcast_info
     const color = sourceColor(e.source)
-    const displayTitle = e.event_time ? `${e.event_time} ${e.title}` : e.title
+    const displayTitle = e.title
     return {
       id: e.id,
       title: displayTitle,
