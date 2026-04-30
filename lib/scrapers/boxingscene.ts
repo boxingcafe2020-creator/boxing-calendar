@@ -35,12 +35,25 @@ interface BSEventItem {
   tag_name?: string
   event_date?: string
   event_timezone?: string
-  networks?: Array<{ name?: string; date?: string }>
+  networks?: Array<{ name?: string; date?: string; time?: string; timezone?: string }>
 }
 
 interface BSResponse {
   results: BSEventItem[]
   next_command?: { args?: Cursor } | null
+}
+
+// Shared core: convert a local date+time in a given tz abbreviation → JST date+time
+function localToJST(datePart: string, hour: number, min: number, tzAbbr: string): { date: string; time: string } | null {
+  const offset = TZ_OFFSETS[tzAbbr.toUpperCase()]
+  if (offset === undefined) return null
+  const fakeUtcMs = new Date(`${datePart}T${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}:00Z`).getTime()
+  const utcMs = fakeUtcMs - offset * 3_600_000
+  const jst = toZonedTime(new Date(utcMs), JST)
+  return {
+    date: tzFormat(jst, 'yyyy-MM-dd', { timeZone: JST }),
+    time: tzFormat(jst, 'HH:mm', { timeZone: JST }),
+  }
 }
 
 function slugify(name: string): string {
@@ -51,40 +64,23 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-/**
- * Parse BoxingScene time header "Saturday | May 2, 2026 | 8:00 PM EST" → JST date + time.
- * BoxingScene lists all times in EST/EDT (America/New_York) but also shows UK/JP events.
- */
+// Parse "Saturday | May 2, 2026 | 8:00 PM EST" → JST date + time.
 function parseHeaderToJST(header: string): { date: string; time: string } | null {
-  // Extract time+tz: "8:00 PM EST"
   const tm = header.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*([A-Z]{2,4})/i)
   if (!tm) return null
   const [, h, min, ampm, tzAbbr] = tm
-  const offset = TZ_OFFSETS[tzAbbr.toUpperCase()]
-  if (offset === undefined) return null
 
-  // Extract date: "May 2, 2026"
   const dm = header.match(/\b([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})\b/)
   if (!dm) return null
   const month = MONTH_MAP[dm[1].toLowerCase().slice(0, 3)]
   if (!month) return null
-  const day = parseInt(dm[2])
-  const year = parseInt(dm[3])
-  const localDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  const localDate = `${dm[3]}-${String(month).padStart(2, '0')}-${String(parseInt(dm[2])).padStart(2, '0')}`
 
-  // Build local datetime, treat as UTC, then shift by offset to get real UTC
   let hour = parseInt(h)
   if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12
   if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0
 
-  const fakeUtcMs = new Date(`${localDate}T${String(hour).padStart(2, '0')}:${min}:00Z`).getTime()
-  const utcMs = fakeUtcMs - offset * 3_600_000
-  const jst = toZonedTime(new Date(utcMs), JST)
-
-  return {
-    date: tzFormat(jst, 'yyyy-MM-dd', { timeZone: JST }),
-    time: tzFormat(jst, 'HH:mm', { timeZone: JST }),
-  }
+  return localToJST(localDate, hour, parseInt(min), tzAbbr)
 }
 
 function parseCursorFromHtml(html: string): Cursor | null {
@@ -216,28 +212,35 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
 
       for (const ev of pageEvents) {
         const title = ev.tag_name?.trim() || ''
-        // event_date from server action is the local (EST) date
-        // Without time info for these events, keep as-is
-        const date = ev.event_date || ''
-        if (!title || !date || date < todayJst) continue
+        const estDate = ev.event_date || ''
+        if (!title || !estDate) continue
 
-        const k = addKey(date, title)
+        // Convert EST date+time → JST using network time info when available
+        const net = ev.networks?.find(n => n.time && n.timezone)
+        let eventDate = estDate
+        let eventTime: string | null = null
+        if (net?.time && net.timezone) {
+          const [h, m] = net.time.split(':').map(Number)
+          const jst = localToJST(estDate, h, m, net.timezone)
+          if (jst) { eventDate = jst.date; eventTime = jst.time }
+        }
+
+        if (eventDate < todayJst) continue
+
+        const k = addKey(eventDate, title)
         if (seen.has(k)) continue
         seen.add(k)
 
-        const slug = slugify(title)
-        const info = anchorInfo[slug] || null
-        // Server action events may also have anchor info if slug matches
-        const jst = info?.timeHeader ? parseHeaderToJST(info.timeHeader) : null
-        const eventDate = jst?.date || date
-        const eventTime = jst?.time || null
+        // Collect all unique broadcast platform names
+        const networkNames = [...new Set((ev.networks ?? []).map(n => n.name).filter(Boolean) as string[])]
+        const broadcastInfo = networkNames.length ? networkNames.join(' / ') : null
 
         merged.push({
           title,
           event_date: eventDate,
           event_time: eventTime,
           location: null,
-          broadcast_info: info?.broadcast ?? (ev.networks?.[0]?.name || null),
+          broadcast_info: broadcastInfo,
           match_details: null,
           source: 'boxingscene',
           source_url: SCHEDULE_URL,
