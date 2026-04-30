@@ -123,6 +123,18 @@ function parsePage(html: string, todayJst: string, broadcastMap: Record<string, 
   return events
 }
 
+// Fetch detail page and extract broadcast platform from div.tv_program_left img[alt]
+async function fetchDetailBroadcast(sid: string): Promise<string | null> {
+  try {
+    const html = await fetchShiftJis(`https://boxmob.jp/sp/schedule/index.html?sid=${sid}`)
+    const $ = cheerio.load(html)
+    const platforms = $('.tv_program_left img').map((_, el) => $(el).attr('alt') || '').get().filter(Boolean)
+    return platforms.length ? [...new Set(platforms)].join(' / ') : null
+  } catch {
+    return null
+  }
+}
+
 export async function scrapeBoxmob(): Promise<ScrapedEvent[]> {
   const { toZonedTime, format: tzFormat } = await import('date-fns-tz')
   const nowJst = toZonedTime(new Date(), 'Asia/Tokyo')
@@ -144,6 +156,15 @@ export async function scrapeBoxmob(): Promise<ScrapedEvent[]> {
       events.push(ev)
     }
   }
+
+  // For events not found in tv_schedule.html, try individual detail pages
+  const nullBroadcastEvs = events.filter(e => e.broadcast_info === null && e.source_url?.includes('sid='))
+  await Promise.all(nullBroadcastEvs.map(async (e) => {
+    const sidMatch = e.source_url!.match(/[?&]sid=(\d+)/)
+    if (!sidMatch) return
+    const platform = await fetchDetailBroadcast(sidMatch[1])
+    if (platform) e.broadcast_info = platform
+  }))
 
   return events
 }
