@@ -82,8 +82,8 @@ export default function Calendar({ events }: Props) {
     return {
       id: e.id,
       title: e.title,
-      start: e.event_time ? `${e.event_date}T${e.event_time}` : e.event_date,
-      allDay: !e.event_time,
+      start: e.event_date,
+      allDay: true,
       extendedProps: e,
       backgroundColor: hasBroadcast ? color : 'transparent',
       borderColor: hasBroadcast ? color : 'transparent',
