@@ -19,7 +19,6 @@ export default function Calendar({ events }: Props) {
   const calendarEvents = events.map(e => {
     const hasBroadcast = !!e.broadcast_info
     const color = sourceColor(e.source)
-    // Prepend time when available: "HH:mm Title"
     const displayTitle = e.event_time ? `${e.event_time} ${e.title}` : e.title
     return {
       id: e.id,
@@ -27,6 +26,7 @@ export default function Calendar({ events }: Props) {
       start: e.event_time ? `${e.event_date}T${e.event_time}` : e.event_date,
       allDay: !e.event_time,
       extendedProps: e,
+      // Keep per-event colors for list-view dot; eventContent controls visual rendering
       backgroundColor: hasBroadcast ? color : 'transparent',
       borderColor: hasBroadcast ? color : 'transparent',
       textColor: hasBroadcast ? '#ffffff' : color,
@@ -66,6 +66,40 @@ export default function Calendar({ events }: Props) {
         locale="ja"
         displayEventTime={false}
         events={calendarEvents}
+        eventContent={(arg) => {
+          const e = arg.event.extendedProps as BoxingEvent
+          const hasBroadcast = !!e.broadcast_info
+          const color = sourceColor(e.source)
+          const title = arg.event.title
+          return hasBroadcast ? (
+            <span style={{
+              display: 'block',
+              backgroundColor: color,
+              color: '#fff',
+              borderRadius: '3px',
+              padding: '0 4px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontSize: '0.85em',
+              lineHeight: '1.4',
+            }}>
+              {title}
+            </span>
+          ) : (
+            <span style={{
+              display: 'block',
+              color,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontSize: '0.85em',
+              lineHeight: '1.4',
+            }}>
+              {title}
+            </span>
+          )
+        }}
         eventClick={info => setSelected(info.event.extendedProps as BoxingEvent)}
         height="auto"
       />

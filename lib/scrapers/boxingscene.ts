@@ -10,14 +10,31 @@ const BROADCAST_RE = /DAZN|ESPN|HBO|Showtime|Amazon Prime|Netflix|PPV|Prime Vide
 
 // Timezone abbreviation → UTC offset in hours (handles EST/EDT/BST etc.)
 const TZ_OFFSETS: Record<string, number> = {
-  EST: -5, EDT: -4,
+  EST: -5, EDT: -4, ET: -5,  // ET treated as EST; DST correction applied in localToJST
   CST: -6, CDT: -5,
   MST: -7, MDT: -6,
   PST: -8, PDT: -7,
-  GMT: 0,  BST: 1,
+  GMT: 0,  UTC: 0,
+  BST: 1,
   WET: 0,  WEST: 1,
   CET: 1,  CEST: 2,
+  EET: 2,  EEST: 3,
   JST: 9,
+}
+
+// BoxingScene labels all Eastern Time events "EST" regardless of DST.
+// In summer (DST active) Eastern Time is EDT = UTC-4, not EST = UTC-5.
+// US DST: second Sunday of March → first Sunday of November.
+function isEasternDST(datePart: string): boolean {
+  const year = parseInt(datePart.slice(0, 4))
+  const dateMs = new Date(datePart + 'T12:00:00Z').getTime()
+  const mar1Day = new Date(Date.UTC(year, 2, 1)).getUTCDay()
+  const firstSunMar = mar1Day === 0 ? 1 : 8 - mar1Day
+  const dstStart = new Date(Date.UTC(year, 2, firstSunMar + 7, 7, 0, 0)).getTime() // 2 AM EST = 07:00 UTC
+  const nov1Day = new Date(Date.UTC(year, 10, 1)).getUTCDay()
+  const firstSunNov = nov1Day === 0 ? 1 : 8 - nov1Day
+  const dstEnd = new Date(Date.UTC(year, 10, firstSunNov, 6, 0, 0)).getTime() // 2 AM EDT = 06:00 UTC
+  return dateMs >= dstStart && dateMs < dstEnd
 }
 
 const MONTH_MAP: Record<string, number> = {
@@ -43,10 +60,14 @@ interface BSResponse {
   next_command?: { args?: Cursor } | null
 }
 
-// Shared core: convert a local date+time in a given tz abbreviation → JST date+time
+// Convert a local date+time in a given tz abbreviation → JST date+time.
+// "EST"/"ET" are treated as Eastern Time with proper DST handling.
 function localToJST(datePart: string, hour: number, min: number, tzAbbr: string): { date: string; time: string } | null {
-  const offset = TZ_OFFSETS[tzAbbr.toUpperCase()]
+  const upper = tzAbbr.toUpperCase()
+  let offset = TZ_OFFSETS[upper]
   if (offset === undefined) return null
+  // Apply DST correction: BoxingScene writes "EST" year-round but means EDT in summer
+  if ((upper === 'EST' || upper === 'ET') && isEasternDST(datePart)) offset = -4
   const fakeUtcMs = new Date(`${datePart}T${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}:00Z`).getTime()
   const utcMs = fakeUtcMs - offset * 3_600_000
   const jst = toZonedTime(new Date(utcMs), JST)
