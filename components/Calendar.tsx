@@ -131,11 +131,11 @@ export default function Calendar({ events }: Props) {
       <div className="mb-4 flex flex-wrap gap-4 text-sm text-gray-600">
         <span className="flex items-center gap-1.5">
           <span className="inline-block px-2 py-0.5 rounded bg-green-500 text-white text-xs font-medium">緑</span>
-          BoxingScene（配信あり）
+          海外ソース（配信あり）
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block px-2 py-0.5 rounded bg-red-500 text-white text-xs font-medium">赤</span>
-          Boxmob（配信あり）
+          国内ソース（配信あり）
         </span>
         <span className="flex items-center gap-1.5 text-gray-400">
           テキストのみ = 配信情報なし
