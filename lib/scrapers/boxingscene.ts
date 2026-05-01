@@ -83,7 +83,7 @@ function slugify(name: string): string {
   return name
     .toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip accents: é→e, ñ→n, etc.
-    .replace(/[''`´]/g, '')                            // remove apostrophes (BoxingScene drops them)
+    .replace(/[''`´‘’ʼ]/g, '')           // remove apostrophes incl. curly quotes
     .replace(/\s+vs\.\s+/i, '-vs-')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')

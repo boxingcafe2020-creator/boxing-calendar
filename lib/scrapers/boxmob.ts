@@ -72,6 +72,18 @@ function parseTime(text: string): string | null {
   return `${m[1].padStart(2, '0')}:${m[2]}`
 }
 
+// Parse "(日本時間:5月24日(日)0:00)" → { date, time } in JST
+function parseJstAnnotation(text: string, todayJst: string): { date: string; time: string } | null {
+  const m = text.match(/日本時間[：:]\s*(\d+)月(\d+)日[^0-9]*(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  const month = parseInt(m[1])
+  const day = parseInt(m[2])
+  const year = inferYear(month, day, todayJst)
+  const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  const time = `${String(parseInt(m[3])).padStart(2, '0')}:${m[4]}`
+  return { date, time }
+}
+
 function parsePage(html: string, todayJst: string, broadcastMap: Record<string, string>): ScrapedEvent[] {
   const $ = cheerio.load(html)
   const events: ScrapedEvent[] = []
@@ -79,16 +91,38 @@ function parsePage(html: string, todayJst: string, broadcastMap: Record<string, 
   $('div.schedule, div.schedule_attention').each((_, el) => {
     const $el = $(el)
 
-    const dateText = $el.find('.schedule_left').text().trim()
-    const eventDate = parseMD(dateText, todayJst)
-    if (!eventDate) return
-    if (eventDate < todayJst) return
-
     const $center2nd = $el.find('.schedule_center_2nd')
     const $link = $center2nd.find('a').first()
 
     const titleNode = $link.contents().filter((_, n) => n.type === 'text').first().text().trim()
     if (!titleNode) return
+
+    // Prefer "(日本時間:...)" annotation for date+time — covers all overseas events
+    let eventDate: string | null = null
+    let eventTime: string | null = null
+    $center2nd.children('span').each((_, s) => {
+      const text = $(s).text()
+      if (!eventDate) {
+        const jst = parseJstAnnotation(text, todayJst)
+        if (jst) { eventDate = jst.date; eventTime = jst.time }
+      }
+    })
+
+    // Fall back to schedule_left date + "開始" time (domestic events)
+    if (!eventDate) {
+      const dateText = $el.find('.schedule_left').text().trim()
+      eventDate = parseMD(dateText, todayJst)
+      if (!eventDate) return
+      $center2nd.children('span').each((_, s) => {
+        if (!eventTime) eventTime = parseTime($(s).text())
+      })
+      if (!eventTime) {
+        const venueSpanText = $link.find('span').first().text()
+        eventTime = parseTime(venueSpanText)
+      }
+    }
+
+    if (eventDate < todayJst) return
 
     const venueSpanText = $link.find('span').first().text()
     let location: string | null = null
@@ -96,12 +130,6 @@ function parsePage(html: string, todayJst: string, broadcastMap: Record<string, 
     if (venueMatch) {
       location = venueMatch[1].split(/\s*[\n\r入場]/)[0].trim() || null
     }
-
-    let eventTime: string | null = null
-    $center2nd.children('span').each((_, s) => {
-      if (!eventTime) eventTime = parseTime($(s).text())
-    })
-    if (!eventTime) eventTime = parseTime(venueSpanText)
 
     const href = $link.attr('href') || ''
     const sidMatch = href.match(/[?&]sid=(\d+)/)
