@@ -90,10 +90,12 @@ function slugify(name: string): string {
 }
 
 // Parse "Saturday | May 2, 2026 | 8:00 PM EST" → JST date + time.
-function parseHeaderToJST(header: string): { date: string; time: string } | null {
-  const tm = header.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*([A-Z]{2,4})/i)
+// fallbackTz is used when the header has no timezone abbreviation.
+function parseHeaderToJST(header: string, fallbackTz = 'EST'): { date: string; time: string } | null {
+  const tm = header.match(/(\d{1,2}):(\d{2})\s*(AM|PM)(?:\s+([A-Z]{2,4}))?/i)
   if (!tm) return null
   const [, h, min, ampm, tzAbbr] = tm
+  const tz = tzAbbr || fallbackTz
 
   const dm = header.match(/\b([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})\b/)
   if (!dm) return null
@@ -105,7 +107,11 @@ function parseHeaderToJST(header: string): { date: string; time: string } | null
   if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12
   if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0
 
-  return localToJST(localDate, hour, parseInt(min), tzAbbr)
+  // "12:00 AM" is BoxingScene's placeholder when the real time isn't set yet.
+  // Boxing events never start at midnight — assume 8:00 PM local time.
+  if (hour === 0 && parseInt(min) === 0) hour = 20
+
+  return localToJST(localDate, hour, parseInt(min), tz)
 }
 
 function parseCursorFromHtml(html: string): Cursor | null {
@@ -126,6 +132,17 @@ function parseRscResponse(text: string): BSResponse | null {
   }
   if (end === -1) return null
   try { return JSON.parse(text.slice(start, end)) as BSResponse } catch { return null }
+}
+
+// Fetch an individual event page and extract the time header text.
+async function fetchEventPageHeader(slug: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://www.boxingscene.com/events/${slug}`, { cache: 'no-store', headers: { 'User-Agent': UA } })
+    if (!res.ok) return null
+    const html = await res.text()
+    const m = html.match(/((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^|<\n]+\|[^|<\n]+\|\s*\d{1,2}:\d{2}\s*(?:AM|PM)(?:\s+[A-Z]{2,4})?)/i)
+    return m ? m[1].trim() : null
+  } catch { return null }
 }
 
 async function callServerAction(cursor: Cursor): Promise<BSResponse | null> {
@@ -255,6 +272,12 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
           const [h, m] = net.time.split(':').map(Number)
           const jst = localToJST(estDate, h, m, net.timezone)
           if (jst) { eventDate = jst.date; eventTime = jst.time }
+        } else if (ev.slug) {
+          const header = await fetchEventPageHeader(ev.slug)
+          if (header) {
+            const jst = parseHeaderToJST(header, ev.event_timezone || 'EST')
+            if (jst) { eventDate = jst.date; eventTime = jst.time }
+          }
         }
 
         if (eventDate < todayJst) continue

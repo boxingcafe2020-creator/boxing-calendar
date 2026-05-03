@@ -128,7 +128,7 @@ function parsePage(html: string, todayJst: string, broadcastMap: Record<string, 
     let location: string | null = null
     const venueMatch = venueSpanText.match(/会場[：:]\s*([^\s\n<]+(?:\s+[^\s\n<]+)*)/)
     if (venueMatch) {
-      location = venueMatch[1].split(/\s*[\n\r入場]/)[0].trim() || null
+      location = venueMatch[1].split(/\s*(?:[\n\r]|入場|チケット)/)[0].trim() || null
     }
 
     const href = $link.attr('href') || ''

@@ -55,7 +55,7 @@ async function upsertEvents(events: ScrapedEvent[]): Promise<number> {
     const { data: existing } = await supabase
       .from('events')
       .select('id')
-      .eq('event_date', event.event_date)
+      .eq('source', event.source)
       .eq('title', event.title)
       .single()
 
