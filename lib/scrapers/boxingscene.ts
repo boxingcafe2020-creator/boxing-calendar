@@ -4,7 +4,8 @@ import { ScrapedEvent } from '@/types'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const JST = 'Asia/Tokyo'
-const ACTION_ID = '7f4b36036e955f48bf1ea1c93d1030f6ad6540be72'
+// Fallback action ID — updated 2026-05-18. Auto-extracted at runtime from the schedule page JS.
+const FALLBACK_ACTION_ID = '7f7ae7fb6d3ff1c7a773c7c32ca85bfae12b895489'
 const SCHEDULE_URL = 'https://www.boxingscene.com/schedule'
 const BROADCAST_RE = /DAZN|ESPN|HBO|Showtime|Amazon Prime|Netflix|PPV|Prime Video|Fox|NBC|ABC|Peacock|Apple TV|Sky|TNT|ProBox|FITE/i
 
@@ -145,13 +146,30 @@ async function fetchEventPageHeader(slug: string): Promise<string | null> {
   } catch { return null }
 }
 
-async function callServerAction(cursor: Cursor): Promise<BSResponse | null> {
+// Extract the current Next-Action ID from the schedule page JS chunk.
+// BoxingScene rebuilds and redeploys Next.js periodically, which changes this hash.
+async function resolveActionId(html: string): Promise<string> {
+  const chunkMatch = html.match(/\/_next\/static\/chunks\/app\/schedule\/page-([^.]+)\.js/)
+  if (!chunkMatch) return FALLBACK_ACTION_ID
+  try {
+    const jsUrl = `https://www.boxingscene.com/_next/static/chunks/app/schedule/page-${chunkMatch[1]}.js`
+    const jsRes = await fetch(jsUrl, { cache: 'no-store', headers: { 'User-Agent': UA } })
+    if (!jsRes.ok) return FALLBACK_ACTION_ID
+    const js = await jsRes.text()
+    const idMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"/)
+    return idMatch ? idMatch[1] : FALLBACK_ACTION_ID
+  } catch {
+    return FALLBACK_ACTION_ID
+  }
+}
+
+async function callServerAction(cursor: Cursor, actionId: string): Promise<BSResponse | null> {
   const res = await fetch(SCHEDULE_URL, {
     method: 'POST',
     cache: 'no-store',
     headers: {
       'User-Agent': UA,
-      'Next-Action': ACTION_ID,
+      'Next-Action': actionId,
       'Content-Type': 'text/plain;charset=UTF-8',
       'Accept': 'text/x-component',
       'Origin': 'https://www.boxingscene.com',
@@ -240,6 +258,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
   // Paginate via server action to collect all remaining events
   const initialCursor = parseCursorFromHtml(html)
   if (initialCursor) {
+    const actionId = await resolveActionId(html)
     let cursor: Cursor | null = initialCursor
     const seenCursors = new Set<string>()
 
@@ -248,7 +267,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
       if (seenCursors.has(key)) break
       seenCursors.add(key)
 
-      const response = await callServerAction(cursor)
+      const response = await callServerAction(cursor, actionId)
       if (!response) break
 
       const pageEvents = (response.results ?? []).filter(e => e.entity_type_id === 2)
