@@ -3,17 +3,24 @@ import { createClient } from '@/lib/supabase/server'
 
 export const maxDuration = 300
 
-export async function POST(request: NextRequest) {
-  // Vercel Cronからのリクエスト or 管理者からのリクエストを検証
-  const cronSecret = request.headers.get('x-cron-secret')
-  const isValidCron = cronSecret === process.env.CRON_SECRET
-
-  if (!isValidCron) {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
+// Vercel cron sends GET with Authorization: Bearer <CRON_SECRET>
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get('authorization')
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
   }
+  return runScrape()
+}
 
+// Admin UI triggers via POST (Supabase session auth)
+export async function POST(request: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
+  return runScrape()
+}
+
+async function runScrape(): Promise<NextResponse> {
   try {
     const { runAllScrapers } = await import('@/lib/scrapers')
     const results = await runAllScrapers()
