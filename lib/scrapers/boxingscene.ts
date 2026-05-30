@@ -4,9 +4,6 @@ import { ScrapedEvent } from '@/types'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const JST = 'Asia/Tokyo'
-// Fallback action ID — updated 2026-05-30. Auto-extracted at runtime from the schedule page JS.
-// Function name: PostgresQueryReadonlyServerFunc
-const FALLBACK_ACTION_ID = '78d5efd864bd753fc6536fe39a9cd2b90f65d7c759'
 const SCHEDULE_URL = 'https://www.boxingscene.com/schedule'
 const BROADCAST_RE = /DAZN|ESPN|HBO|Showtime|Amazon Prime|Netflix|PPV|Prime Video|Fox|NBC|ABC|Peacock|Apple TV|Sky|TNT|ProBox|FITE/i
 
@@ -147,29 +144,6 @@ async function fetchEventPageHeader(slug: string): Promise<string | null> {
   } catch { return null }
 }
 
-// Extract the current Next-Action ID from the schedule page JS chunk.
-// BoxingScene rebuilds and redeploys Next.js periodically, which changes this hash.
-async function resolveActionId(html: string): Promise<string> {
-  const chunkMatch = html.match(/\/_next\/static\/chunks\/app\/schedule\/page-([^.]+)\.js/)
-  if (!chunkMatch) return FALLBACK_ACTION_ID
-  try {
-    const jsUrl = `https://www.boxingscene.com/_next/static/chunks/app/schedule/page-${chunkMatch[1]}.js`
-    const jsRes = await fetch(jsUrl, { cache: 'no-store', headers: { 'User-Agent': UA } })
-    if (!jsRes.ok) return FALLBACK_ACTION_ID
-    const js = await jsRes.text()
-    // Must target "PostgresQueryReadonlyServerFunc" specifically — the JS chunk contains
-    // multiple createServerReference calls (comments, reactions, search, etc.) and the
-    // schedule-fetching action is NOT the first one in the file.
-    const idMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"[^)]*"PostgresQueryReadonlyServerFunc"/)
-    if (idMatch) return idMatch[1]
-    // Fallback: try the generic pattern (picks up the first hash — may be wrong)
-    const genericMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"/)
-    return genericMatch ? genericMatch[1] : FALLBACK_ACTION_ID
-  } catch {
-    return FALLBACK_ACTION_ID
-  }
-}
-
 async function callServerAction(cursor: Cursor, actionId: string): Promise<BSResponse | null> {
   const res = await fetch(SCHEDULE_URL, {
     method: 'POST',
@@ -186,6 +160,35 @@ async function callServerAction(cursor: Cursor, actionId: string): Promise<BSRes
   })
   if (!res.ok) throw new Error(`BoxingScene server action failed: ${res.status}`)
   return parseRscResponse(await res.text())
+}
+
+// Dynamically extract the Next-Action ID from the schedule page JS chunk every run.
+// BoxingScene redeploys Next.js periodically, rotating this hash — never hardcode it.
+// Strategy:
+//   1. Named pattern: look for the hash next to "PostgresQueryReadonlyServerFunc" (current name).
+//   2. Probe: collect all createServerReference hashes and try each via the real API.
+//   3. Throw if nothing works so errors are visible rather than silently stale.
+async function resolveActionId(html: string, cursor: Cursor): Promise<string> {
+  const chunkMatch = html.match(/\/_next\/static\/chunks\/app\/schedule\/page-([^.]+)\.js/)
+  if (!chunkMatch) throw new Error('BoxingScene: schedule JS chunk URL not found in page HTML — site structure may have changed')
+
+  const jsUrl = `https://www.boxingscene.com/_next/static/chunks/app/schedule/page-${chunkMatch[1]}.js`
+  const jsRes = await fetch(jsUrl, { cache: 'no-store', headers: { 'User-Agent': UA } })
+  if (!jsRes.ok) throw new Error(`BoxingScene: could not load schedule JS chunk (HTTP ${jsRes.status})`)
+  const js = await jsRes.text()
+
+  // Primary: target the known function name — fast and precise when it matches
+  const namedMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"[^)]*"PostgresQueryReadonlyServerFunc"/)
+  if (namedMatch) return namedMatch[1]
+
+  // Secondary: function was renamed — probe every candidate hash against the real API
+  const candidates = [...js.matchAll(/createServerReference\)\("([0-9a-f]{40,})"/g)].map(m => m[1])
+  for (const id of candidates) {
+    const data = await callServerAction(cursor, id).catch(() => null)
+    if (data?.results) return id
+  }
+
+  throw new Error('BoxingScene: no valid Next-Action ID found in schedule JS — site API may have changed')
 }
 
 export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
@@ -265,7 +268,7 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
   // Paginate via server action to collect all remaining events
   const initialCursor = parseCursorFromHtml(html)
   if (initialCursor) {
-    const actionId = await resolveActionId(html)
+    const actionId = await resolveActionId(html, initialCursor)
     let cursor: Cursor | null = initialCursor
     const seenCursors = new Set<string>()
 
