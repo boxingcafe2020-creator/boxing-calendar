@@ -4,8 +4,9 @@ import { ScrapedEvent } from '@/types'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const JST = 'Asia/Tokyo'
-// Fallback action ID — updated 2026-05-18. Auto-extracted at runtime from the schedule page JS.
-const FALLBACK_ACTION_ID = '7f7ae7fb6d3ff1c7a773c7c32ca85bfae12b895489'
+// Fallback action ID — updated 2026-05-30. Auto-extracted at runtime from the schedule page JS.
+// Function name: PostgresQueryReadonlyServerFunc
+const FALLBACK_ACTION_ID = '78d5efd864bd753fc6536fe39a9cd2b90f65d7c759'
 const SCHEDULE_URL = 'https://www.boxingscene.com/schedule'
 const BROADCAST_RE = /DAZN|ESPN|HBO|Showtime|Amazon Prime|Netflix|PPV|Prime Video|Fox|NBC|ABC|Peacock|Apple TV|Sky|TNT|ProBox|FITE/i
 
@@ -156,8 +157,14 @@ async function resolveActionId(html: string): Promise<string> {
     const jsRes = await fetch(jsUrl, { cache: 'no-store', headers: { 'User-Agent': UA } })
     if (!jsRes.ok) return FALLBACK_ACTION_ID
     const js = await jsRes.text()
-    const idMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"/)
-    return idMatch ? idMatch[1] : FALLBACK_ACTION_ID
+    // Must target "PostgresQueryReadonlyServerFunc" specifically — the JS chunk contains
+    // multiple createServerReference calls (comments, reactions, search, etc.) and the
+    // schedule-fetching action is NOT the first one in the file.
+    const idMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"[^)]*"PostgresQueryReadonlyServerFunc"/)
+    if (idMatch) return idMatch[1]
+    // Fallback: try the generic pattern (picks up the first hash — may be wrong)
+    const genericMatch = js.match(/createServerReference\)\("([0-9a-f]{40,})"/)
+    return genericMatch ? genericMatch[1] : FALLBACK_ACTION_ID
   } catch {
     return FALLBACK_ACTION_ID
   }
