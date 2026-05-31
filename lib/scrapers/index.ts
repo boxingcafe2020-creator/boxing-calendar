@@ -49,21 +49,34 @@ async function upsertEvents(events: ScrapedEvent[]): Promise<number> {
 
   let count = 0
   for (const event of events) {
-    // Leave past events untouched
     if (event.event_date < todayJst) continue
 
-    const { data: existing } = await supabase
+    // limit(1)+order instead of .single() — .single() errors on 0 or 2+ rows,
+    // which would silently skip the update and keep inserting duplicates.
+    const { data: rows } = await supabase
       .from('events')
-      .select('id')
+      .select('id, event_time, location, broadcast_info, match_details')
       .eq('source', event.source)
       .eq('title', event.title)
-      .single()
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    const existing = rows?.[0] ?? null
 
     if (existing) {
-      const { error } = await supabase
-        .from('events')
-        .update({ ...event, updated_at: new Date().toISOString() })
-        .eq('id', existing.id)
+      // Smart merge: non-null scraped values win; keep existing when scraper has nothing.
+      // This way newly-added info (broadcast, time, venue) always propagates,
+      // while manually-set or previously-scraped data isn't erased if scraper returns null.
+      const patch = {
+        event_date: event.event_date,
+        event_time: event.event_time ?? existing.event_time,
+        location: event.location ?? existing.location,
+        broadcast_info: event.broadcast_info ?? existing.broadcast_info,
+        match_details: event.match_details ?? existing.match_details,
+        source_url: event.source_url,
+        updated_at: new Date().toISOString(),
+      }
+      const { error } = await supabase.from('events').update(patch).eq('id', existing.id)
       if (!error) count++
     } else {
       const { error } = await supabase
