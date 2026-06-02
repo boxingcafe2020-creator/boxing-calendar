@@ -237,10 +237,22 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
 
     // Prefer entries that have time info; also pick up broadcast info from either anchor
     const prev = anchorInfo[slug]
-    anchorInfo[slug] = {
+    const info = {
       broadcast: broadcast ?? prev?.broadcast ?? null,
       timeHeader: timeHeader ?? prev?.timeHeader ?? null,
       href,
+    }
+    anchorInfo[slug] = info
+
+    // BoxingScene sometimes has a URL slug that differs from the event title
+    // (e.g. slug set before a fight rebooking). Also key by h3 title so that
+    // JSON-LD lookup via slugify(name) finds the correct href.
+    const h3Title = $(el).find('h3').first().text().trim()
+    if (h3Title) {
+      const nameSlug = slugify(h3Title)
+      if (nameSlug && nameSlug !== slug && !anchorInfo[nameSlug]) {
+        anchorInfo[nameSlug] = info
+      }
     }
   })
 
