@@ -88,9 +88,18 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
+const JAPAN_LOCATIONS = ['japan', 'tokyo', 'osaka', 'nagoya', 'yokohama', 'saitama', 'fukuoka', 'kobe', 'kyoto', 'hiroshima', 'sendai', '札幌', 'sapporo']
+
+function isJapanLocation(location: string | null): boolean {
+  if (!location) return false
+  const l = location.toLowerCase()
+  return JAPAN_LOCATIONS.some(k => l.includes(k)) || /[぀-ヿ一-鿿]/.test(location)
+}
+
 // Parse "Saturday | May 2, 2026 | 8:00 PM EST" → JST date + time.
 // fallbackTz is used when the header has no timezone abbreviation.
-function parseHeaderToJST(header: string, fallbackTz = 'EST'): { date: string; time: string } | null {
+// skipMidnightCorrection: true for Japan events (12:00 AM may be a valid local time).
+function parseHeaderToJST(header: string, fallbackTz = 'EST', skipMidnightCorrection = false): { date: string; time: string } | null {
   const tm = header.match(/(\d{1,2}):(\d{2})\s*(AM|PM)(?:\s+([A-Z]{2,4}))?/i)
   if (!tm) return null
   const [, h, min, ampm, tzAbbr] = tm
@@ -107,8 +116,8 @@ function parseHeaderToJST(header: string, fallbackTz = 'EST'): { date: string; t
   if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0
 
   // "12:00 AM" is BoxingScene's placeholder when the real time isn't set yet.
-  // Boxing events never start at midnight — assume 8:00 PM local time.
-  if (hour === 0 && parseInt(min) === 0) hour = 20
+  // Treat as 18:00 (6 PM) local time — except for Japan events where midnight may be valid.
+  if (hour === 0 && parseInt(min) === 0 && !skipMidnightCorrection) hour = 18
 
   return localToJST(localDate, hour, parseInt(min), tz)
 }
@@ -139,8 +148,10 @@ async function fetchEventPageHeader(slug: string): Promise<string | null> {
     const res = await fetch(`https://www.boxingscene.com/events/${slug}`, { cache: 'no-store', headers: { 'User-Agent': UA } })
     if (!res.ok) return null
     const html = await res.text()
-    const m = html.match(/((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^|<\n]+\|[^|<\n]+\|\s*\d{1,2}:\d{2}\s*(?:AM|PM)(?:\s+[A-Z]{2,4})?)/i)
-    return m ? m[1].trim() : null
+    // Match both old format "Saturday | May 2, 2026 | 8:00 PM EST"
+    // and new format "Sat, Jun 6, 2026 - 12:00 AM EST"
+    const m = html.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^|<\n]*(?:\|[^|<\n]+\||\s*[-–]\s*)[^<\n]*\d{1,2}:\d{2}\s*(?:AM|PM)(?:\s+[A-Z]{2,4})?/i)
+    return m ? m[0].trim() : null
   } catch { return null }
 }
 
@@ -198,17 +209,33 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
   const $ = cheerio.load(html)
 
   // Build slug → {broadcast, timeHeader, href}
-  // NOTE: time header is the PREVIOUS SIBLING of the anchor (not parent().prev())
-  // Header format: "Saturday | May 2, 2026 | 8:00 PM EST"
+  // Each event card has two anchors with the same href (image + text).
+  // The time header is INSIDE the text anchor: "Sat, Jun 6, 2026 - 12:00 AM EST"
   const anchorInfo: Record<string, { broadcast: string | null; timeHeader: string | null; href: string }> = {}
   $('a[href*="/events/"]').each((_, el) => {
     const href = $(el).attr('href') || ''
-    const text = $(el).text()
-    const broadcastMatch = text.match(BROADCAST_RE)
-    const broadcast = broadcastMatch ? broadcastMatch[0] : null
-    const timeHeader = $(el).prev().text().trim() || null  // "Saturday | May 2, 2026 | 8:00 PM EST"
     const slug = href.replace('/events/', '').replace(/\/$/, '')
-    anchorInfo[slug] = { broadcast, timeHeader, href }
+    if (!slug) return
+
+    const innerText = $(el).text()
+    const broadcastMatch = innerText.match(BROADCAST_RE)
+    const broadcast = broadcastMatch ? broadcastMatch[0] : null
+    // Time may be in a div or span inside the text anchor: "Sat, Jun 6, 2026 - 12:00 AM EST"
+    // Search div+span children for one that starts with a day abbreviation
+    let timeHeader: string | null = null
+    $(el).find('div, span').each((_, node) => {
+      if (timeHeader) return
+      const text = $(node).text().trim()
+      if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),/.test(text)) timeHeader = text
+    })
+
+    // Prefer entries that have time info; also pick up broadcast info from either anchor
+    const prev = anchorInfo[slug]
+    anchorInfo[slug] = {
+      broadcast: broadcast ?? prev?.broadcast ?? null,
+      timeHeader: timeHeader ?? prev?.timeHeader ?? null,
+      href,
+    }
   })
 
   // Today in JST for filtering past events
@@ -235,8 +262,11 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         const slug = slugify(name)
         const info = anchorInfo[slug] || null
 
+        const location: string | null =
+          item.location?.name || item.location?.address?.addressRegion || null
+
         // Convert to JST using time header when available
-        const jst = info?.timeHeader ? parseHeaderToJST(info.timeHeader) : null
+        const jst = info?.timeHeader ? parseHeaderToJST(info.timeHeader, 'EST', isJapanLocation(location)) : null
         const eventDate = jst?.date || (item.startDate as string || '')
         const eventTime = jst?.time || null
 
@@ -245,9 +275,6 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         const k = addKey(eventDate, name)
         if (seen.has(k)) continue
         seen.set(k, merged.length)
-
-        const location: string | null =
-          item.location?.name || item.location?.address?.addressRegion || null
 
         merged.push({
           title: name,
@@ -293,18 +320,20 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         let eventDate = estDate
         let eventTime: string | null = null
         if (ev.event_time) {
-          const [h, m] = ev.event_time.split(':').map(Number)
+          let [h, m] = ev.event_time.split(':').map(Number)
           const tz = ev.event_timezone || 'EST'
+          if (h === 0 && m === 0 && tz.toUpperCase() !== 'JST') h = 18
           const jst = localToJST(estDate, h, m, tz)
           if (jst) { eventDate = jst.date; eventTime = jst.time }
         } else if (net?.time && net.timezone) {
-          const [h, m] = net.time.split(':').map(Number)
+          let [h, m] = net.time.split(':').map(Number)
+          if (h === 0 && m === 0 && net.timezone.toUpperCase() !== 'JST') h = 18
           const jst = localToJST(estDate, h, m, net.timezone)
           if (jst) { eventDate = jst.date; eventTime = jst.time }
         } else if (ev.slug) {
           const header = await fetchEventPageHeader(ev.slug)
           if (header) {
-            const jst = parseHeaderToJST(header, ev.event_timezone || 'EST')
+            const jst = parseHeaderToJST(header, ev.event_timezone || 'EST', ev.event_timezone === 'JST')
             if (jst) { eventDate = jst.date; eventTime = jst.time }
           }
         }

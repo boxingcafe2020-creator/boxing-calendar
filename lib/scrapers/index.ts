@@ -18,6 +18,7 @@ export async function runAllScrapers() {
     const events = await scrapeBoxingScene()
     const count = await upsertEvents(events)
     results.boxingscene = count
+    await pruneStaleEvents('boxingscene', events)
     await logScrape('boxingscene', 'success', `スクレイプ${events.length}件 / DB${count}件追加/更新`, count)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -30,6 +31,7 @@ export async function runAllScrapers() {
     const events = await scrapeBoxmob()
     const count = await upsertEvents(events)
     results.boxmob = count
+    await pruneStaleEvents('boxmob', events)
     await logScrape('boxmob', 'success', `スクレイプ${events.length}件 / DB${count}件追加/更新`, count)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -39,6 +41,30 @@ export async function runAllScrapers() {
 
   if (results.errors.length > 0) await sendErrorNotification(results.errors)
   return results
+}
+
+async function pruneStaleEvents(source: string, scrapedEvents: ScrapedEvent[]): Promise<number> {
+  if (scrapedEvents.length === 0) return 0
+
+  const { toZonedTime, format: tzFormat } = await import('date-fns-tz')
+  const todayJst = tzFormat(toZonedTime(new Date(), 'Asia/Tokyo'), 'yyyy-MM-dd', { timeZone: 'Asia/Tokyo' })
+
+  const { data: dbEvents } = await supabase
+    .from('events')
+    .select('id, title')
+    .eq('source', source)
+    .gte('event_date', todayJst)
+
+  if (!dbEvents || dbEvents.length === 0) return 0
+
+  const scrapedTitles = new Set(scrapedEvents.map(e => e.title.toLowerCase().trim()))
+  const toDelete = dbEvents.filter(e => !scrapedTitles.has(e.title.toLowerCase().trim()))
+
+  if (toDelete.length === 0) return 0
+
+  const { error } = await supabase.from('events').delete().in('id', toDelete.map(e => e.id))
+  if (error) throw error
+  return toDelete.length
 }
 
 async function upsertEvents(events: ScrapedEvent[]): Promise<number> {
