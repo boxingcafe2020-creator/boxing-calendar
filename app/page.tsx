@@ -5,9 +5,11 @@ export const revalidate = 3600
 
 export default async function Home() {
   const supabase = await createClient()
+  const todayJst = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
   const { data: events } = await supabase
     .from('events')
     .select('*')
+    .gte('event_date', todayJst)
     .order('event_date', { ascending: true })
 
   return (

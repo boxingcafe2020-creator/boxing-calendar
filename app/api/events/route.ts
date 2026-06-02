@@ -4,9 +4,11 @@ import { createClient as createServiceClient } from '@supabase/supabase-js'
 
 export async function GET() {
   const supabase = await createClient()
+  const todayJst = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
   const { data, error } = await supabase
     .from('events')
     .select('*')
+    .gte('event_date', todayJst)
     .order('event_date', { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
