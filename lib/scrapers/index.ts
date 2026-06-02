@@ -46,12 +46,14 @@ export async function runAllScrapers() {
 async function pruneStaleEvents(source: string, scrapedEvents: ScrapedEvent[]): Promise<number> {
   if (scrapedEvents.length === 0) return 0
 
-  // Delete ALL DB events for this source not in the current scrape results.
-  // Scrapers only return upcoming events, so past events are always absent and get cleaned up here.
+  const { toZonedTime, format: tzFormat } = await import('date-fns-tz')
+  const todayJst = tzFormat(toZonedTime(new Date(), 'Asia/Tokyo'), 'yyyy-MM-dd', { timeZone: 'Asia/Tokyo' })
+
   const { data: dbEvents } = await supabase
     .from('events')
     .select('id, title')
     .eq('source', source)
+    .gte('event_date', todayJst)
 
   if (!dbEvents || dbEvents.length === 0) return 0
 
