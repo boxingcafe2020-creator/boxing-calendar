@@ -142,17 +142,23 @@ function parseRscResponse(text: string): BSResponse | null {
   try { return JSON.parse(text.slice(start, end)) as BSResponse } catch { return null }
 }
 
-// Fetch an individual event page and extract the time header text.
-async function fetchEventPageHeader(slug: string): Promise<string | null> {
+// Detect Japan from an event detail page.
+// The location section renders as: ">Location</div><div ...>CityName, Japan</div>"
+function isJapanEventPage(html: string): boolean {
+  return /Location<\/div>(?:<[^>]*>)*([^<]*(?:Japan|Tokyo|Osaka|Nagoya|Yokohama|Sapporo|Fukuoka|Kobe|Kyoto|Tokoname)[^<]*)/i.test(html)
+}
+
+// Fetch an individual event page and return the time header + Japan flag.
+async function fetchEventPageInfo(slug: string): Promise<{ header: string | null; isJapan: boolean }> {
   try {
     const res = await fetch(`https://www.boxingscene.com/events/${slug}`, { cache: 'no-store', headers: { 'User-Agent': UA } })
-    if (!res.ok) return null
+    if (!res.ok) return { header: null, isJapan: false }
     const html = await res.text()
     // Match both old format "Saturday | May 2, 2026 | 8:00 PM EST"
     // and new format "Sat, Jun 6, 2026 - 12:00 AM EST"
     const m = html.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^|<\n]*(?:\|[^|<\n]+\||\s*[-–]\s*)[^<\n]*\d{1,2}:\d{2}\s*(?:AM|PM)(?:\s+[A-Z]{2,4})?/i)
-    return m ? m[0].trim() : null
-  } catch { return null }
+    return { header: m ? m[0].trim() : null, isJapan: isJapanEventPage(html) }
+  } catch { return { header: null, isJapan: false } }
 }
 
 async function callServerAction(cursor: Cursor, actionId: string): Promise<BSResponse | null> {
@@ -238,6 +244,19 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
     }
   })
 
+  // For events showing "12:00 AM" (unconfirmed time placeholder), pre-fetch detail pages
+  // to check if the event is in Japan — Japan events must not have the midnight→18:00 correction applied.
+  const midnightSlugs = Object.entries(anchorInfo)
+    .filter(([, info]) => /12:00 AM/i.test(info.timeHeader || ''))
+    .map(([slug]) => slug)
+  const japanSlugs = new Set<string>()
+  await Promise.all(midnightSlugs.map(async (slug) => {
+    try {
+      const res = await fetch(`https://www.boxingscene.com/events/${slug}`, { cache: 'no-store', headers: { 'User-Agent': UA } })
+      if (res.ok && isJapanEventPage(await res.text())) japanSlugs.add(slug)
+    } catch {}
+  }))
+
   // Today in JST for filtering past events
   const nowJst = toZonedTime(new Date(), JST)
   const todayJst = tzFormat(nowJst, 'yyyy-MM-dd', { timeZone: JST })
@@ -266,7 +285,8 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
           item.location?.name || item.location?.address?.addressRegion || null
 
         // Convert to JST using time header when available
-        const jst = info?.timeHeader ? parseHeaderToJST(info.timeHeader, 'EST', isJapanLocation(location)) : null
+        const isJapan = isJapanLocation(location) || japanSlugs.has(slug)
+        const jst = info?.timeHeader ? parseHeaderToJST(info.timeHeader, 'EST', isJapan) : null
         const eventDate = jst?.date || (item.startDate as string || '')
         const eventTime = jst?.time || null
 
@@ -322,18 +342,22 @@ export async function scrapeBoxingScene(): Promise<ScrapedEvent[]> {
         if (ev.event_time) {
           let [h, m] = ev.event_time.split(':').map(Number)
           const tz = ev.event_timezone || 'EST'
-          if (h === 0 && m === 0 && tz.toUpperCase() !== 'JST') h = 18
+          const evIsJapan = tz.toUpperCase() === 'JST' || japanSlugs.has(ev.slug || '')
+          if (h === 0 && m === 0 && !evIsJapan) h = 18
           const jst = localToJST(estDate, h, m, tz)
           if (jst) { eventDate = jst.date; eventTime = jst.time }
         } else if (net?.time && net.timezone) {
           let [h, m] = net.time.split(':').map(Number)
-          if (h === 0 && m === 0 && net.timezone.toUpperCase() !== 'JST') h = 18
+          const evIsJapan = net.timezone.toUpperCase() === 'JST' || japanSlugs.has(ev.slug || '')
+          if (h === 0 && m === 0 && !evIsJapan) h = 18
           const jst = localToJST(estDate, h, m, net.timezone)
           if (jst) { eventDate = jst.date; eventTime = jst.time }
         } else if (ev.slug) {
-          const header = await fetchEventPageHeader(ev.slug)
-          if (header) {
-            const jst = parseHeaderToJST(header, ev.event_timezone || 'EST', ev.event_timezone === 'JST')
+          const pageInfo = await fetchEventPageInfo(ev.slug)
+          if (pageInfo.isJapan) japanSlugs.add(ev.slug)
+          if (pageInfo.header) {
+            const evIsJapan = pageInfo.isJapan || ev.event_timezone === 'JST'
+            const jst = parseHeaderToJST(pageInfo.header, ev.event_timezone || 'EST', evIsJapan)
             if (jst) { eventDate = jst.date; eventTime = jst.time }
           }
         }
